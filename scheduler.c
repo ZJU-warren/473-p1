@@ -150,6 +150,13 @@ void MLFQ_remove() {
 	while(pthread_mutex_trylock(MLFQ_lock) != 0); //lock
 	PCB_List *remove = running_thread;
 	
+	//update MLFQ priority pointers
+	if ((schedule_type == FCFS) || (schedule_type == SRTF)) {
+		MLFQ[0] = running_thread->next;
+	} else { //PBS or MLFQ
+		MLFQ[running_thread->priority - 1] = running_thread->next;
+	}
+	
 	//update running_thread
 	running_thread_update();
 	
@@ -214,9 +221,7 @@ void blocked_insert(PCB_List* insert) {
 void running_thread_update() {
 	while(pthread_mutex_trylock(running_thread_lock) != 0); //lock
 	
-	if (schedule_type == FCFS) {
-		running_thread = MLFQ[0];
-	} else if (schedule_type == SRTF) {
+	if ((schedule_type == FCFS) || (schedule_type == SRTF)) {
 		running_thread = MLFQ[0];
 	} else { //same for PBS and MLFQ, search for highest priority that isn't NULL
 		for (int i = (NUM_PRIO - 1); i > 0; i--) { //search from lowest to highest
