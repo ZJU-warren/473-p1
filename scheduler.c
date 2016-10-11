@@ -24,8 +24,8 @@ int num_preemeptions(int tid);
 float total_wait_time(int tid);
 void MLFQ_insert(PCB_List*);
 void MLFQ_remove();
-void preempt(PCB_List*);
 *PCB_List search_blocked(int);
+void MLFQ_demote(PCB_List*);
 
 
 #define FCFS    0
@@ -35,57 +35,46 @@ void preempt(PCB_List*);
 
 #define NUM_PRIO 5
 
-//states for loc of PCB
-#define NONE    0   //new thread
-#define RDYQ    1   //in ready queue already
-#define FINQ    2   //in blocked list (thread is coming back from being blocked)
-
 //global variable for tracking which scheduling type to be used
 int schedule_type; //INITIALIZE THIS
 
 //node for PCB
 //arrival_time and priority get updated when coming out of blocked queue
+//tq_remaining will be used to determine when to demote this thread to a lower MLFQ priority
 typedef struct PCB_list_
 {
-	int tid;		        //thread ID
-	int loc;                //where this PCB is
-	int num_preemptions;	//number of times this thread has been preempted
-	float arrival_time;	    //most recent arrival time in the queue
-	float time_waiting;	    //time this thread was waited in the ready queue
-	int time_remaining;	    //time this thread has left before burst is done
-	int priority;		    //priority the thread has
+	int tid; //thread ID
+	int num_preemptions; //number of times this thread has been preempted
+	float arrival_time; //most recent arrival time in the queue
+	float time_waiting; //time this thread was waited in the ready queue
+	int time_remaining; //time this thread has left before burst is done
+	int priority; //priority the thread has
+	int tq_remaining; //how long is left for this time quantum
 	struct PCB_list_* next;	//next PCB in the queue
 } PCB_list;
 
 //pointer to multi-level feedback queue
-//will have 5 priority levels:
-//for FCFS: insert at tail of first priority
-//for SRTF: insert at first priority after any threads with less remaining time, and before any with more
-//for PBS: insert at tail of appropriate priority
-//for MLFQ: insert at tail of first priority, after time quanta up, insert at tail of one lower priority
+//will have 5 priority levels
 PCB_list** MLFQ; //INITIALIZE THIS
 
 //locks for maintaining atomicity when:
-//inserting a thread into the ready queue
-//removing a thread from the ready queue
-//not sure if cpu_access needed but maybe?
-pthread_mutex_t insert_lock; //INITIALIZE THIS
-pthread_mutex_t remove_lock; //INITIALIZE THIS
-pthread_mutex_t cpu_access_lock; //INITIALIZE THIS
+//updating MLFQ
+//updating blocked_list
+pthread_mutex_t MLFQ_lock; //initialize this
+pthread_mutex_t blocked_list_lock; //intialize this
 
 //where the currently running thread's PCB is
 PCB_list* running_thread;
-
-//head pointer for the next thread
-//gets moved to running_thread when running_thread is blocked/preempted
-//updated on insertion or removal
-PCB_list* next_thread;
 
 //list for keeping track of threads that have already run but may run again
 //search through here for number of preemptions and time waiting
 PCB_list* blocked_list;
 
-//this function will insert this_pcb into the queue at the appropriate spot
+//this function will insert this_pcb into the queue at the appropriate spot:
+//for FCFS: insert at tail of first priority
+//for SRTF: insert at first priority after any threads with less remaining time, and before any with more
+//for PBS: insert at tail of appropriate priority
+//for MLFQ: insert at tail of first priority, after time quanta up, insert at tail of one lower priority
 void MLFQ_insert(PCB_List *this_pcb) {
 
 }
@@ -99,32 +88,30 @@ void MLFQ_remove() {
 
 }
 
-//this function will 
-void preempt(PCB_List *this_pcb) {
-
-}
-
 //searches through stored PCB data for the thread
 //returns pointer to that PCB
 *PCB_List search_blocked(int tid) {
     PCB_List *search = blocked_list;
     
     //search for the appropriate thread
-    while (search->tid != tid && search != NULL) {
+    while ((search->tid != tid) && (search != NULL)) {
         search = search->next;
     }
     
     return search;
 }
 
+//used for demoting a thread after finishing it's current time quantum
+void MLFQ_demote(PCB_List* this_pcb) {
+	
+}
 
 void init_scheduler( int sched_type ) {
     schedule_type = sched_type;
     
     //initialize locks
-    pthread_mutex_init(&insert_lock,NULL);
-    pthread_mutex_init(&remove_lock,NULL);
-    pthread_mutex_init(&cpu_access_lock,NULL);
+    pthread_mutex_init(&MLFQ_lock,NULL);
+    pthread_mutex_init(&blocked_list_lock,NULL);
     
     //initalize MLFQ
     MLFQ = malloc(NUM_PRIO * sizeof(PCB_list*));
@@ -133,7 +120,6 @@ void init_scheduler( int sched_type ) {
     }
     
     running_thread = NULL;
-    next_thread = NULL;
     blocked_list = NULL;
 }
 
