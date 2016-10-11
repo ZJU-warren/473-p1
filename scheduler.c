@@ -24,7 +24,8 @@ int num_preemeptions(int tid);
 float total_wait_time(int tid);
 void MLFQ_insert(PCB_List*);
 void MLFQ_remove();
-*PCB_List search_blocked(int);
+*PCB_List blocked_remove(int);
+void blocked_insert(PCB_List*);
 void MLFQ_demote(PCB_List*);
 
 
@@ -76,7 +77,7 @@ PCB_list* blocked_list;
 //for PBS: insert at tail of appropriate priority
 //for MLFQ: insert at tail of first priority, after time quanta up, insert at tail of one lower priority
 void MLFQ_insert(PCB_List *this_pcb) {
-
+	
 }
 
 //this function will:
@@ -88,17 +89,44 @@ void MLFQ_remove() {
 
 }
 
+//inserts a PCB into the blocked_list
+void blocked_insert(PCB_List* insert) {
+	while (pthread_mutex_trylock(blocked_list_lock) != 0);
+	
+	PCB_List *temp = blocked_list;
+	
+	while (temp->next != NULL) {
+		temp = temp->next;
+	}
+	
+	temp->next = insert;
+	
+	pthread_mutex_unlock(blocked_list_lock);
+)
+
 //searches through stored PCB data for the thread
-//returns pointer to that PCB
-*PCB_List search_blocked(int tid) {
-    PCB_List *search = blocked_list;
+//returns pointer to that PCB, or NULL if not in blocked_list
+*PCB_List blocked_remove(int tid) {
+    //if blocked_list is empty
+	if (blocked_list->next == NULL) {
+		return NULL;
+	}
+	
+	PCB_List *search = blocked_list;
     
     //search for the appropriate thread
-    while ((search->tid != tid) && (search != NULL)) {
+    while ((search->next->tid != tid) && (search->next != NULL)) {
         search = search->next;
     }
-    
-    return search;
+	
+	//if the thread isn't in blocked_list
+	if (search->next == NULL) {
+		return NULL;
+	} else { //thread found
+		PCB_List *found = search->next;
+		search->next = found->next;
+		return found;
+	}
 }
 
 //used for demoting a thread after finishing it's current time quantum
@@ -145,7 +173,7 @@ int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
 
 int num_preemeptions(int tid){
 	//search for the PCB
-	PCB_List *this_pcb = search_blocked(tid);
+	PCB_List *this_pcb = blocked_remove(tid);
 
 	//if PCB exists, return the number of preemptions
 	if (this_pcb != NULL) {
@@ -160,7 +188,7 @@ int num_preemeptions(int tid){
 
 float total_wait_time(int tid){
 	//search for the PCB
-	PCB_List *this_pcb = search_blocked(tid);
+	PCB_List *this_pcb = blocked_remove(tid);
 
 	//if PCB exists, return the number of preemptions
 	if (this_pcb != NULL) {
