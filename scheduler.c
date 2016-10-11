@@ -136,7 +136,13 @@ void MLFQ_insert(PCB_List *this_pcb) {
 		
 		//insert
 		search->next = this_pcb;
+		
+		//set TQ for this thread to 5 (TQ for highest priority)
+		search->tq_remaining = 5;
 	}
+	
+	//update running_thread in case of preemption
+	running_thread_update();
 	
 	pthread_mutex_unlock(MLFQ_lock); //unlock
 }
@@ -162,6 +168,9 @@ void MLFQ_remove() {
 	
 	//update next
 	remove->next = NULL;
+	
+	//decrement preemptions (running_thread_update automatically increments)
+	remove->num_preemptions--;
 	
 	//insert finished thread into blocked_list
 	blocked_insert(remove);
@@ -221,6 +230,9 @@ void blocked_insert(PCB_List* insert) {
 void running_thread_update() {
 	while(pthread_mutex_trylock(running_thread_lock) != 0); //lock
 	
+	//keep track of current running_thread in case of preemption
+	PCB_List *old = running_thread;
+	
 	if ((schedule_type == FCFS) || (schedule_type == SRTF)) {
 		running_thread = MLFQ[0];
 	} else { //same for PBS and MLFQ, search for highest priority that isn't NULL
@@ -231,12 +243,43 @@ void running_thread_update() {
 		}
 	}
 	
+	//if the old thread is not the current thread, increment preemptions
+	if (old->tid != running_thread->tid) {
+		old->num_preemptions++;
+	}
+	
 	pthread_mutex_unlock(running_thread_lock); //unlock
 }
 
 //used for demoting a thread after finishing it's current time quantum
 void MLFQ_demote(PCB_List* this_pcb) {
+	while (pthread_mutex_trylock(MLFQ_lock) != 0); //lock
 	
+	//set this priority's head pointer to this->next
+	MLFQ[this_pcb->priority - 1]->next = this_pcb->next;
+	
+	//set to next priority, if not at lowest
+	if (this_pcb->priority != (NUM_PRIO - 1)) {
+		this_pcb->priority++;
+	}
+	
+	//NULL this next
+	this_pcb->next = NULL;
+	
+	//enqueue at end of new priority
+	PCB_List *search = MLFQ[this_pcb->priority - 1];
+	while (search->next != NULL) {
+		search = search->next;
+	}
+	search->next = this_pcb;
+	
+	//increment num_preemptions
+	this_pcb->num_preemptions++;
+	
+	//update running_thread
+	running_thread_update();
+	
+	pthread_mutex_unlock(MLFQ_lock); //unlock
 }
 
 void init_scheduler( int sched_type ) {
@@ -258,11 +301,55 @@ void init_scheduler( int sched_type ) {
 }
 
 int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
+	//update global time
+	advance_global_time(currentTime);
+	
+	PCB_List *this_pcb = blocked_remove(tid);
+	
+	//check if thread already running, if so, update remainingTime
+	if (running_thread->tid == tid) {
+		running_thread->time_remaining = remainingTime;
+		
+	} else if (this_pcb != NULL){ //else, check if coming from blocked queue
+		//if so, update arrival_time, time_remaining, priority
+		this_pcb->arrival_time = currentTime;
+		this_pcb->time_remaining = remainingTime;
+		this_pcb->priority = tprio;
+		
+	} else { //else new thread, create pcb
+		this_pcb->tid = tid;
+		this_pcb->num_preemptions = 0;
+		this_pcb->arrival_time = currentTime;
+		this_pcb->time_waiting = 0;
+		this_pcb->time_remaining = remainingTime;
+		this_pcb->priority = tprio;
+		this_pcb->tq_remaining = 0;
+		this_pcb->next = NULL;
+	}
+	
+	//if thread not already running, insert into ready queue
+	if (running_thread->tid != tid) {
+		MLFQ_insert(this_pcb);
+	}
+	
+	//if MFLQ, if TQ done, demote
+	if ((schedule_type == MLFQ) && (this_pcb->tq_remaining == 0)) {
+		MLFQ_demote(this_pcb);
+	}
 	
 
 	//wait for this PCB to placed into the running thread
 	while (running_thread->tid != tid) {
 		sched_yield();
+	}
+	
+	//--------------------
+	//AT THIS POINT THIS THREAD HAS CPU
+	//--------------------
+	
+	//if MLFQ, update TQ
+	if (schedule_type == MLFQ) {
+		this_pcb->tq_remaining--;
 	}
 
 	//increment the wait time
@@ -271,6 +358,7 @@ int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
 	//if this thread is done, remove it from the ready queue, insert in 
 	if (remainingTime == 0) {
 		MLFQ_remove(&this_pcb);
+		
 	}
 
 	//return the global time
