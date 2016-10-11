@@ -18,33 +18,10 @@
 #include <math.h>
 #include <pthread.h>
 
-void init_scheduler( int sched_type );
-int schedule_me( float currentTime, int tid, int remainingTime, int tprio );
-int num_preemeptions(int tid);
-float total_wait_time(int tid);
-
-void MLFQ_insert(PCB_List*);
-void MLFQ_remove();
-*PCB_List blocked_remove(int);
-void blocked_insert(PCB_List*);
-void running_thread_update();
-void MLFQ_demote(PCB_List*);
-
-
-#define FCFS    0
-#define SRTF    1
-#define PBS     2
-#define MLFQ    3
-
-#define NUM_PRIO 5
-
-//global variable for tracking which scheduling type to be used
-int schedule_type; //INITIALIZE THIS
-
 //node for PCB
 //arrival_time and priority get updated when coming out of blocked queue
 //tq_remaining will be used to determine when to demote this thread to a lower MLFQ priority
-typedef struct PCB_list_
+typedef struct PCB_List_
 {
 	int tid; //thread ID
 	int num_preemptions; //number of times this thread has been preempted
@@ -53,27 +30,50 @@ typedef struct PCB_list_
 	int time_remaining; //time this thread has left before burst is done
 	int priority; //priority the thread has
 	int tq_remaining; //how long is left for this time quantum
-	struct PCB_list_* next;	//next PCB in the queue
-} PCB_list;
+	struct PCB_List_* next;	//next MFLQ_list[CB in the queue
+} PCB_List;
+
+void init_scheduler( int sched_type );
+int schedule_me( float currentTime, int tid, int remainingTime, int tprio );
+int num_preemeptions(int tid);
+float total_wait_time(int tid);
+
+void MLFQ_insert(PCB_List*);
+void MLFQ_remove();
+PCB_List* blocked_remove(int);
+void blocked_insert(PCB_List*);
+void running_thread_update();
+void MLFQ_demote(PCB_List*);
+
+
+#define FCFS    0
+#define SRTF    1
+#define PBS     2
+#define MLFQ_id 3
+
+#define NUM_PRIO 5
+
+//global variable for tracking which scheduling type to be used
+int schedule_type; //INITIALIZE THIS
 
 //pointer to multi-level feedback queue
 //will have 5 priority levels
-PCB_list** MLFQ; //INITIALIZE THIS
+PCB_List** MLFQ; //INITIALIZE THIS
 
 //locks for maintaining atomicity when:
 //updating MLFQ
 //updating blocked_list
 //updating running_thread
-pthread_mutex_t MLFQ_lock; //initialize this
-pthread_mutex_t blocked_list_lock; //intialize this
-pthread_mutex_t running_thread_lock; //initialize this
+pthread_mutex_t* MLFQ_lock; //initialize this 
+pthread_mutex_t* blocked_list_lock; //intialize this 
+pthread_mutex_t* running_thread_lock; //initialize this 
 
 //where the currently running thread's PCB is
-PCB_list* running_thread;
+PCB_List* running_thread;
 
 //list for keeping track of threads that have already run but may run again
 //search through here for number of preemptions and time waiting
-PCB_list* blocked_list;
+PCB_List* blocked_list;
 
 //this function will insert this_pcb into the queue at the appropriate spot:
 //for FCFS: insert at tail of first priority
@@ -81,7 +81,7 @@ PCB_list* blocked_list;
 //for PBS: insert at appropriate priority, after any threads with less remaining time
 //for MLFQ: insert at tail of first priorityy
 void MLFQ_insert(PCB_List *this_pcb) {
-	PCB_list *search = blocked_remove(this_pcb->tid); //will search for and remove PCB in blocked list
+	PCB_List *search = blocked_remove(this_pcb->tid); //will search for and remove PCB in blocked list
 	
 	if (search != NULL) { //thread is coming from blocked queue
 		//update number preemptions and arrival time
@@ -198,7 +198,7 @@ void blocked_insert(PCB_List* insert) {
 
 //searches through stored PCB data for the thread
 //returns pointer to that PCB, or NULL if not in blocked_list
-*PCB_List blocked_remove(int tid) {
+PCB_List* blocked_remove(int tid) {
     //if blocked_list is empty
 	if (blocked_list->next == NULL) {
 		return NULL;
@@ -236,7 +236,8 @@ void running_thread_update() {
 	if ((schedule_type == FCFS) || (schedule_type == SRTF)) {
 		running_thread = MLFQ[0];
 	} else { //same for PBS and MLFQ, search for highest priority that isn't NULL
-		for (int i = (NUM_PRIO - 1); i > 0; i--) { //search from lowest to highest
+		int i;
+		for (i = (NUM_PRIO - 1); i > 0; i--) { //search from lowest to highest
 			if (MLFQ[i] != NULL) {
 				running_thread = MLFQ[i];
 			}
@@ -286,13 +287,18 @@ void init_scheduler( int sched_type ) {
     schedule_type = sched_type;
     
     //initialize locks
-    pthread_mutex_init(&MLFQ_lock, NULL);
-    pthread_mutex_init(&blocked_list_lock, NULL);
-	pthread_mutex_init(&running_thread_lock, NULL);
+    MLFQ_lock = malloc(sizeof(pthread_mutex_t)); 
+    blocked_list_lock = malloc(sizeof(pthread_mutex_t)); 
+    running_thread_lock = malloc(sizeof(pthread_mutex_t)); 
+ 
+    pthread_mutex_init(MLFQ_lock, NULL); 
+    pthread_mutex_init(blocked_list_lock, NULL); 
+  	pthread_mutex_init(running_thread_lock, NULL); 
     
     //initalize MLFQ
-    MLFQ = malloc(NUM_PRIO * sizeof(PCB_list*));
-    for (int i = 0; i < NUM_PRIO; i++) {
+    MLFQ = malloc(NUM_PRIO * sizeof(PCB_List*));
+    int i;
+    for (i = 0; i < NUM_PRIO; i++) {
         MLFQ[i] = NULL;
     }
     
@@ -333,7 +339,7 @@ int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
 	}
 	
 	//if MFLQ, if TQ done, demote
-	if ((schedule_type == MLFQ) && (this_pcb->tq_remaining == 0)) {
+	if ((schedule_type == MLFQ_id) && (this_pcb->tq_remaining == 0)) {
 		MLFQ_demote(this_pcb);
 	}
 	
@@ -348,7 +354,7 @@ int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
 	//--------------------
 	
 	//if MLFQ, update TQ
-	if (schedule_type == MLFQ) {
+	if (schedule_type == MLFQ_id) {
 		this_pcb->tq_remaining--;
 	}
 
