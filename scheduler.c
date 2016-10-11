@@ -61,8 +61,10 @@ PCB_list** MLFQ; //INITIALIZE THIS
 //locks for maintaining atomicity when:
 //updating MLFQ
 //updating blocked_list
+//updating running_thread
 pthread_mutex_t MLFQ_lock; //initialize this
 pthread_mutex_t blocked_list_lock; //intialize this
+pthread_mutex_t running_thread_lock; //initialize this
 
 //where the currently running thread's PCB is
 PCB_list* running_thread;
@@ -73,11 +75,68 @@ PCB_list* blocked_list;
 
 //this function will insert this_pcb into the queue at the appropriate spot:
 //for FCFS: insert at tail of first priority
-//for SRTF: insert at first priority after any threads with less remaining time, and before any with more
-//for PBS: insert at tail of appropriate priority
-//for MLFQ: insert at tail of first priority, after time quanta up, insert at tail of one lower priority
+//for SRTF: insert at first priority after any threads with less remaining time
+//for PBS: insert at appropriate priority, after any threads with less remaining time
+//for MLFQ: insert at tail of first priorityy
 void MLFQ_insert(PCB_List *this_pcb) {
+	PCB_list *search = blocked_remove(this_pcb->tid); //will search for and remove PCB in blocked list
 	
+	if (search != NULL) { //thread is coming from blocked queue
+		//update number preemptions and arrival time
+		this_pcb->num_preemptions = search->num_preemptions;
+		this_pcb->arrival_time = search->arrival_time;
+	}
+	
+	while (pthread_mutex_trylock(MLFQ_lock) != 0); //lock
+	
+	if (schedule_type == FCFS) {
+		search = MLFQ[0]; //point to head of queue
+		
+		//search for tail
+		while (search->next != NULL) {
+			search = search->next;
+		}
+		
+		//insert
+		search->next = this_pcb;
+		
+	} else if (schedule_type == SRTF) {
+		search = MLFQ[0]; //point to head of queue
+		
+		//search for tail or a thread that has a longer time remaining
+		while ((search->next != NULL) && (search->next->time_remaining < this_pcb->time_remaining)) {
+			search = search->next;
+		}
+		
+		//insert
+		this_pcb->next = search->next;
+		search->next = this_pcb;
+		
+	} else if (schedule_type == PBS) {
+		search = MLFQ[this_pcb->priority - 1]; //point to appropriate priority
+		
+		//search for tail or a thread that has a longer time remaining
+		while ((search->next != NULL) && (search->next->time_remaining < this_pcb->time_remaining)) {
+			search = search->next;
+		}
+		
+		//insert
+		this_pcb->next = search->next;
+		search->next = this_pcb;
+		
+	} else { //MLFQ
+		search = MLFQ[0]; //point to head of queue
+		
+		//search for tail
+		while (search->next != NULL) {
+			search = search->next;
+		}
+		
+		//insert
+		search->next = this_pcb;
+	}
+	
+	pthread_mutex_unlock(MLFQ_lock); //unlock
 }
 
 //this function will:
@@ -91,6 +150,7 @@ void MLFQ_remove() {
 
 //inserts a PCB into the blocked_list
 void blocked_insert(PCB_List* insert) {
+	//lock
 	while (pthread_mutex_trylock(blocked_list_lock) != 0);
 	
 	PCB_List *temp = blocked_list;
@@ -100,9 +160,11 @@ void blocked_insert(PCB_List* insert) {
 	}
 	
 	temp->next = insert;
+	insert->next = NULL;
 	
+	//unlock
 	pthread_mutex_unlock(blocked_list_lock);
-)
+}
 
 //searches through stored PCB data for the thread
 //returns pointer to that PCB, or NULL if not in blocked_list
@@ -111,6 +173,9 @@ void blocked_insert(PCB_List* insert) {
 	if (blocked_list->next == NULL) {
 		return NULL;
 	}
+	
+	//lock
+	while (pthread_mutex_trylock(blocked_list_lock) !=);
 	
 	PCB_List *search = blocked_list;
     
@@ -121,10 +186,12 @@ void blocked_insert(PCB_List* insert) {
 	
 	//if the thread isn't in blocked_list
 	if (search->next == NULL) {
+		pthread_mutex_unlock(blocked_list_lock); //unlock
 		return NULL;
 	} else { //thread found
 		PCB_List *found = search->next;
 		search->next = found->next;
+		pthread_mutex_unlock(blocked_list_lock); //unlock
 		return found;
 	}
 }
@@ -138,8 +205,9 @@ void init_scheduler( int sched_type ) {
     schedule_type = sched_type;
     
     //initialize locks
-    pthread_mutex_init(&MLFQ_lock,NULL);
-    pthread_mutex_init(&blocked_list_lock,NULL);
+    pthread_mutex_init(&MLFQ_lock, NULL);
+    pthread_mutex_init(&blocked_list_lock, NULL);
+	pthread_mutex_init(&running_thread_lock, NULL);
     
     //initalize MLFQ
     MLFQ = malloc(NUM_PRIO * sizeof(PCB_list*));
@@ -174,6 +242,7 @@ int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
 int num_preemeptions(int tid){
 	//search for the PCB
 	PCB_List *this_pcb = blocked_remove(tid);
+	blocked_insert(this_pcb);
 
 	//if PCB exists, return the number of preemptions
 	if (this_pcb != NULL) {
@@ -182,21 +251,22 @@ int num_preemeptions(int tid){
 
 	//otherwise, return -1
 	else {
-	return -1;
+		return -1;
 	}
 }
 
 float total_wait_time(int tid){
 	//search for the PCB
 	PCB_List *this_pcb = blocked_remove(tid);
+	blocked_insert(this_pcb);
 
 	//if PCB exists, return the number of preemptions
 	if (this_pcb != NULL) {
 		return this_pcb->time_waiting;
 	} 
 
-	//otherwise, return -1
+	//otherwise, return -0.1
 	else {
-	return -0.1;
+		return -0.1;
 	}
 }
