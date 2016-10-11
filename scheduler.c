@@ -22,10 +22,12 @@ void init_scheduler( int sched_type );
 int schedule_me( float currentTime, int tid, int remainingTime, int tprio );
 int num_preemeptions(int tid);
 float total_wait_time(int tid);
+
 void MLFQ_insert(PCB_List*);
 void MLFQ_remove();
 *PCB_List blocked_remove(int);
 void blocked_insert(PCB_List*);
+void running_thread_update();
 void MLFQ_demote(PCB_List*);
 
 
@@ -145,7 +147,19 @@ void MLFQ_insert(PCB_List *this_pcb) {
 //put the next_thread into running_thread,
 //and find the next 
 void MLFQ_remove() {
-
+	while(pthread_mutex_trylock(MLFQ_lock) != 0); //lock
+	PCB_List *remove = running_thread;
+	
+	//update running_thread
+	running_thread_update();
+	
+	//update next
+	remove->next = NULL;
+	
+	//insert finished thread into blocked_list
+	blocked_insert(remove);
+	
+	pthread_mutex_unlock(MLFQ_lock); //unlock
 }
 
 //inserts a PCB into the blocked_list
@@ -175,7 +189,7 @@ void blocked_insert(PCB_List* insert) {
 	}
 	
 	//lock
-	while (pthread_mutex_trylock(blocked_list_lock) !=);
+	while (pthread_mutex_trylock(blocked_list_lock) != 0);
 	
 	PCB_List *search = blocked_list;
     
@@ -194,6 +208,25 @@ void blocked_insert(PCB_List* insert) {
 		pthread_mutex_unlock(blocked_list_lock); //unlock
 		return found;
 	}
+}
+
+//used for finding the proper process to run
+void running_thread_update() {
+	while(pthread_mutex_trylock(running_thread_lock) != 0); //lock
+	
+	if (schedule_type == FCFS) {
+		running_thread = MLFQ[0];
+	} else if (schedule_type == SRTF) {
+		running_thread = MLFQ[0];
+	} else { //same for PBS and MLFQ, search for highest priority that isn't NULL
+		for (int i = (NUM_PRIO - 1); i > 0; i--) { //search from lowest to highest
+			if (MLFQ[i] != NULL) {
+				running_thread = MLFQ[i];
+			}
+		}
+	}
+	
+	pthread_mutex_unlock(running_thread_lock); //unlock
 }
 
 //used for demoting a thread after finishing it's current time quantum
