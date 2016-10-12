@@ -39,6 +39,7 @@ int num_preemeptions(int tid);
 float total_wait_time(int tid);
 
 void MLFQ_insert(PCB_List*);
+PCB_List* MLFQ_search(int);
 void MLFQ_remove();
 PCB_List* blocked_remove(int);
 void blocked_insert(PCB_List*);
@@ -70,6 +71,7 @@ pthread_mutex_t* MLFQ_lock;
 pthread_mutex_t* blocked_list_lock;
 pthread_mutex_t* running_thread_lock;
 pthread_mutex_t* global_time_lock;
+pthread_mutex_t* sched_lock;
 
 //where the currently running thread's PCB is
 PCB_List* running_thread;
@@ -87,12 +89,7 @@ int scheduler_time = 0;
 //for PBS: insert at appropriate priority, after any threads with less remaining time
 //for MLFQ: insert at tail of first priorityy
 void MLFQ_insert(PCB_List *this_pcb) {
-	PCB_List *search = blocked_remove(this_pcb->tid); //will search for and remove PCB in blocked list
-	if (search != NULL) { //thread is coming from blocked queue
-		//update number preemptions and arrival time
-		this_pcb->num_preemptions = search->num_preemptions;
-		this_pcb->arrival_time = search->arrival_time;
-	}
+	PCB_List *search = NULL;
 	
 	while (pthread_mutex_trylock(MLFQ_lock) != 0); //lock
 	
@@ -131,12 +128,6 @@ void MLFQ_insert(PCB_List *this_pcb) {
 				}
 
 			}
-			search =  MLFQ[0];
-			printf("after inserting %d:\n", this_pcb->tid);
-			while(search!= NULL){
-				printf("%d\n", search->tid);
-				search = search->next;
-			}
 		
 	} else if (schedule_type == PBS) {
 		search = MLFQ[this_pcb->priority - 1]; //point to appropriate priority
@@ -169,6 +160,9 @@ void MLFQ_insert(PCB_List *this_pcb) {
 			//set TQ for this thread to 5 (TQ for highest priority)
 			search->tq_remaining = 5;
 		}
+		this_pcb->tq_remaining = 5;
+
+		this_pcb->priority = 0;
 	}
 	
 	//update running_thread in case of preemption
@@ -230,36 +224,6 @@ void blocked_insert(PCB_List* insert) {
 	pthread_mutex_unlock(blocked_list_lock);
 }
 
-//searches through stored PCB data for the thread
-//returns pointer to that PCB, or NULL if not in blocked_list
-PCB_List* blocked_remove(int tid) {
-    //if blocked_list is empty
-	if (blocked_list == NULL) {
-		return NULL;
-	}
-	
-	//lock
-	while (pthread_mutex_trylock(blocked_list_lock) != 0);
-	
-	PCB_List *search = blocked_list;
-    
-    //search for the appropriate thread
-    while ((search->next != NULL) && (search->next->tid != tid)) {
-        search = search->next;
-    }
-	
-	//if the thread isn't in blocked_list
-	if (search->next == NULL) {
-		pthread_mutex_unlock(blocked_list_lock); //unlock
-		return NULL;
-	} else { //thread found
-		PCB_List *found = search->next;
-		search->next = found->next;
-		pthread_mutex_unlock(blocked_list_lock); //unlock
-		return found;
-	}
-}
-
 //used for finding the proper process to run
 void running_thread_update() {
 	while(pthread_mutex_trylock(running_thread_lock) != 0); //lock
@@ -297,6 +261,17 @@ void MLFQ_demote(PCB_List* this_pcb) {
 	if (this_pcb->priority != (NUM_PRIO - 1)) {
 		this_pcb->priority++;
 	}
+
+	//update tq_remaining
+	if (this_pcb->priority == 1) {
+		this_pcb->tq_remaining = 10; 
+	} else if (this_pcb->priority == 2) {
+		this_pcb->tq_remaining = 15;
+	} else if (this_pcb->priority == 3) {
+		this_pcb->tq_remaining = 20;
+	} else {
+		this_pcb->tq_remaining = 25;
+	}
 	
 	//NULL this next
 	this_pcb->next = NULL;
@@ -325,11 +300,13 @@ void init_scheduler( int sched_type ) {
     blocked_list_lock = malloc(sizeof(pthread_mutex_t)); 
     running_thread_lock = malloc(sizeof(pthread_mutex_t)); 
     global_time_lock = malloc(sizeof(pthread_mutex_t)); 
+    sched_lock = malloc(sizeof(pthread_mutex_t)); 
  
     pthread_mutex_init(MLFQ_lock, NULL); 
     pthread_mutex_init(blocked_list_lock, NULL); 
   	pthread_mutex_init(running_thread_lock, NULL); 
   	pthread_mutex_init(global_time_lock, NULL); 
+  	pthread_mutex_init(sched_lock, NULL); 
     
     //initalize MLFQ
     MLFQ = malloc(NUM_PRIO * sizeof(PCB_List*));
@@ -342,21 +319,32 @@ void init_scheduler( int sched_type ) {
     blocked_list = NULL;
 }
 
-int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
-	PCB_List *this_pcb = blocked_remove(tid);
-	
-	//check if thread already running, if so, update remainingTime
-	if ((running_thread != NULL) && (running_thread->tid == tid)) {
-		running_thread->time_remaining = remainingTime;
-		
-	} else if (this_pcb != NULL){ //else, check if coming from blocked queue
-		//if so, update arrival_time, time_remaining, priority
-		this_pcb->arrival_time = currentTime;
-		this_pcb->time_remaining = remainingTime;
-		this_pcb->priority = tprio;
-		MLFQ_insert(this_pcb);
+PCB_List* MLFQ_search(int tid) {
+	while(pthread_mutex_trylock(MLFQ_lock) != 0); //lock
+	PCB_List* search;
+	int i;
+	for (i = 0; i<NUM_PRIO; i++) { //for each priority
+		if (MLFQ[i] != NULL) { //if priority isnt empty
+			search = MLFQ[i];
+			while(search->next != NULL && search->tid != tid) {
+				search = search->next;
+			}
+			if (search->tid == tid) {
+				pthread_mutex_unlock(MLFQ_lock);
+				return search;
+			}
 
-	} else { //else new thread, create pcb
+		}	
+	}
+	pthread_mutex_unlock(MLFQ_lock);
+	return NULL;
+}
+
+int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
+	while(pthread_mutex_trylock(sched_lock) != 0); //lock
+	PCB_List *this_pcb = MLFQ_search(tid);
+	
+	if (this_pcb == NULL) { //if new thread, create pcb and insert
 		this_pcb = malloc(sizeof(PCB_List));
 		this_pcb->tid = tid;
 		this_pcb->num_preemptions = 0;
@@ -374,7 +362,7 @@ int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
 	if ((schedule_type == MLFQ_id) && (this_pcb->tq_remaining == 0)) {
 		MLFQ_demote(this_pcb);
 	}
-	
+	pthread_mutex_unlock(sched_lock);
 
 	//wait for this PCB to placed into the running thread
 	while ((running_thread == NULL) || (running_thread->tid != tid)) {
@@ -384,7 +372,8 @@ int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
 	//--------------------
 	//AT THIS POINT THIS THREAD HAS CPU
 	//--------------------
-	
+	while(pthread_mutex_trylock(sched_lock) != 0); //lock
+
 	//if MLFQ, update TQ
 	if (schedule_type == MLFQ_id) {
 		this_pcb->tq_remaining--;
@@ -402,7 +391,9 @@ int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
 
 	//return the global time
 	int time = scheduler_time;
-	return time; //not sure if this is correct
+	pthread_mutex_unlock(sched_lock);
+
+	return time;
 }
 
 int num_preemeptions(int tid){
