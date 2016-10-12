@@ -113,24 +113,30 @@ void MLFQ_insert(PCB_List *this_pcb) {
 		
 	} else if (schedule_type == SRTF) {
 		search = MLFQ[0]; //point to head of queue
-		{
-			//search for tail or a thread that has a longer time remaining
-			//if (search->time_remaining < this_pcb->time_remaining)
-			while ((search != NULL) && (search->time_remaining < this_pcb->time_remaining)) {
-				search = search->next;
-			}
-			
-			//insert
-			if (search == MLFQ[0]){
-				this_pcb->next = search;
+		if (search == NULL) //base case
+			MLFQ[0] = this_pcb;
+		else{
+			if(search->time_remaining > this_pcb->time_remaining){
 				MLFQ[0] = this_pcb;
+				this_pcb->next = search;
 			}
 			else{
-				this_pcb->next = search;
-				search = this_pcb;
-			}
+				//search for tail or a thread that has a longer time remaining
+				while ((search->next != NULL) && (search->next->time_remaining < this_pcb->time_remaining)) {
+					search = search->next;
+				}
+					PCB_List* temp = search->next;
+					search->next = this_pcb;
+					this_pcb->next = temp;
+				}
 
-		}
+			}
+			search =  MLFQ[0];
+			printf("after inserting %d:\n", this_pcb->tid);
+			while(search!= NULL){
+				printf("%d\n", search->tid);
+				search = search->next;
+			}
 		
 	} else if (schedule_type == PBS) {
 		search = MLFQ[this_pcb->priority - 1]; //point to appropriate priority
@@ -348,7 +354,8 @@ int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
 		this_pcb->arrival_time = currentTime;
 		this_pcb->time_remaining = remainingTime;
 		this_pcb->priority = tprio;
-		
+		MLFQ_insert(this_pcb);
+
 	} else { //else new thread, create pcb
 		this_pcb = malloc(sizeof(PCB_List));
 		this_pcb->tid = tid;
@@ -359,12 +366,9 @@ int schedule_me( float currentTime, int tid, int remainingTime, int tprio ) {
 		this_pcb->priority = tprio;
 		this_pcb->tq_remaining = 0;
 		this_pcb->next = NULL;
-	}
-	
-	//if thread not already running, insert into ready queue
-	if ((running_thread == NULL) || (running_thread->tid != tid)) {
 		MLFQ_insert(this_pcb);
 	}
+	
 	
 	//if MFLQ, if TQ done, demote
 	if ((schedule_type == MLFQ_id) && (this_pcb->tq_remaining == 0)) {
