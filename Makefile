@@ -1,5 +1,5 @@
 CFLAGS = 
-LIBS = -lpthread -lrt -lm
+LIBS = -lpthread -lrt -lm -g
 SOURCES = project1.c scheduler.c 
 OUT = out
 default:
